@@ -15,10 +15,11 @@ func main() {
 	}
 
 	for {
-		conn, err := listener.Accept()
+		conn, err := listener.Accept() // blocks till connections request send
 		if err != nil {
 			fmt.Println("Cannot accept connection, ERR-", err)
 		}
+		fmt.Println("Client connected")
 
 		for line := range getLinesChannel(conn) {
 			fmt.Printf("read: %s\n", line)
@@ -37,7 +38,7 @@ func getLinesChannel(f io.ReadCloser) <-chan string {
 		
 		for {
 			data := make([]byte, 8)
-			_, err := f.Read(data)
+			_, err := f.Read(data) // blocking untill data is send
 
 			if err != nil {
 				if err.Error() == "EOF" {
