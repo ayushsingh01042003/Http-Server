@@ -21,10 +21,13 @@ func main() {
 		}
 		fmt.Println("Client connected")
 
-		for line := range getLinesChannel(conn) {
-			fmt.Printf("read: %s\n", line)
-		}
-		conn.Close()
+		go func(conn net.Conn) {
+			for line := range getLinesChannel(conn) {
+				if line != "" {
+					fmt.Printf("read: %s\n", line)
+				}
+			}
+		} (conn)
 	}
 }
 
@@ -41,7 +44,7 @@ func getLinesChannel(f io.ReadCloser) <-chan string {
 			_, err := f.Read(data) // blocking untill data is send
 
 			if err != nil {
-				if err.Error() == "EOF" {
+				if err == io.EOF {
 					strChan <- output
 					break
 				}
