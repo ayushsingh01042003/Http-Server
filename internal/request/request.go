@@ -52,6 +52,12 @@ func parseRequestLine(b string) (*RequestLine, string, error) {
 		return nil, "", errors.New("invalid request line size")
 	}
 
+	for _, c := range rlArr[0] {
+		if c < 65 || c > 96 {
+			return nil, "", errors.New("invalid request line method")
+		}
+	}
+
 	httpVersionParts := strings.Split(rlArr[2], "/")
 	if httpVersionParts[0] != "HTTP" || httpVersionParts[1] != "1.1" || len(httpVersionParts) != 2 {
 		return nil, "", errors.New("invalid http version")
