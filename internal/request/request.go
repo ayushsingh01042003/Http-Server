@@ -1,14 +1,14 @@
 package request
 
 import (
+	"bytes"
 	"errors"
-	"fmt"
 	"io"
-	"strings"
 )
 
 type Request struct {
 	RequestLine RequestLine
+	State       parserState
 }
 
 type RequestLine struct {
@@ -23,71 +23,118 @@ type chunkReader struct {
 	pos             int
 }
 
-// Read reads up to len(p) or numBytesPerRead bytes from the string per call
-// its useful for simulating reading a variable number of bytes per chunk from a network connection
+type parserState string
+
+const (
+	StateInit  parserState = "initialized"
+	StateDone  parserState = "done"
+	StateError parserState = "error"
+)
+
 func (cr *chunkReader) Read(p []byte) (n int, err error) {
 	if cr.pos >= len(cr.data) {
 		return 0, io.EOF
 	}
-	endIndex := cr.pos + cr.numBytesPerRead
-	if endIndex > len(cr.data) {
-		endIndex = len(cr.data)
-	}
+	endIndex := min(cr.pos+cr.numBytesPerRead, len(cr.data))
 	n = copy(p, cr.data[cr.pos:endIndex])
 	cr.pos += n
 
 	return n, nil
 }
 
-func RequestFromReader(reader io.Reader) (*Request, error) {
-	reqInBytes, err := io.ReadAll(reader)
-	if err != nil {
-		fmt.Println("Error reading request", err)
-	}
-	
-	requestString := string(reqInBytes)
-	rl, _, err := parseRequestLine(requestString)
-	if err != nil {
-		fmt.Println("Error Parsing RequsetLine", err)
-		return nil, err
-	}
-
+func newRequest() *Request {
 	return &Request{
-		RequestLine: *rl,
-	}, nil
+		State: StateInit,
+	}
 }
 
-func parseRequestLine(b string) (*RequestLine, string, error) {
-	separator := "\r\n"
+func RequestFromReader(reader io.Reader) (*Request, error) {
+	request := newRequest()
 
-	index := strings.Index(b, separator)
+	buf := make([]byte, 1024)
+	bufLen := 0
+
+	for !request.done() {
+		n, err := reader.Read(buf[bufLen:])
+		if err != nil {
+			return nil, err
+		}
+
+		bufLen += n
+		bytesParsed, err := request.parse(buf[:bufLen])
+		if err != nil {
+			return nil, err
+		}
+
+		copy(buf, buf[bytesParsed:bufLen])
+		bufLen -= bytesParsed
+	}
+
+	return request, nil
+}
+
+func parseRequestLine(b []byte) (*RequestLine, int, error) {
+	separator := []byte("\r\n")
+
+	index := bytes.Index(b, separator)
 	if index == -1 {
-		return nil, "", errors.New("invalid request line format")
+		return nil, 0, nil
 	}
 
 	var rl RequestLine
 	startLine := b[:index]
-	restOfMsg := b[index + len(separator):]
+	bytesRead := index
 
-	rlArr := strings.Split(startLine, " ")
+	rlArr := bytes.Split(startLine, []byte(" "))
 	if len(rlArr) != 3 {
-		return nil, "", errors.New("invalid request line size")
+		return nil, 0, errors.New("invalid request line size")
 	}
 
 	for _, c := range rlArr[0] {
 		if c < 65 || c > 96 {
-			return nil, "", errors.New("invalid request line method")
+			return nil, 0, errors.New("invalid request line method")
 		}
 	}
 
-	httpVersionParts := strings.Split(rlArr[2], "/")
-	if httpVersionParts[0] != "HTTP" || httpVersionParts[1] != "1.1" || len(httpVersionParts) != 2 {
-		return nil, "", errors.New("invalid http version")
+	httpVersionParts := bytes.Split(rlArr[2], []byte("/"))
+	if string(httpVersionParts[0]) != "HTTP" || string(httpVersionParts[1]) != "1.1" || len(httpVersionParts) != 2 {
+		return nil, 0, errors.New("invalid http version")
 	}
 
-	rl.Method = rlArr[0]
-	rl.RequestTarget = rlArr[1]
-	rl.HttpVersion = httpVersionParts[1]
+	rl.Method = string(rlArr[0])
+	rl.RequestTarget = string(rlArr[1])
+	rl.HttpVersion = string(httpVersionParts[1])
 
-	return &rl, restOfMsg, nil
+	return &rl, bytesRead, nil
+}
+
+func (r *Request) parse(data []byte) (int, error) {
+	read := 0
+outer:
+	for {
+		switch r.State {
+		case StateError:
+			return 0, errors.New("error state")
+		case StateInit:
+			rl, n, err := parseRequestLine(data[read:])
+			if err != nil {
+				r.State = StateInit
+				return 0, err
+			}
+			if n == 0 {
+				break outer
+			}
+			r.RequestLine = *rl
+			read += n
+			r.State = StateDone
+		case StateDone:
+			break outer
+		}
+	}
+
+	return read, nil
+}
+
+func (r *Request) done() bool {
+	return r.State == StateDone || r.State == StateError
 }
