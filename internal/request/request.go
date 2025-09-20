@@ -3,6 +3,7 @@ package request
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 )
 
@@ -118,7 +119,7 @@ outer:
 		case StateInit:
 			rl, n, err := parseRequestLine(data[read:])
 			if err != nil {
-				r.State = StateInit
+				r.State = StateError
 				return 0, err
 			}
 			if n == 0 {
@@ -137,4 +138,10 @@ outer:
 
 func (r *Request) done() bool {
 	return r.State == StateDone || r.State == StateError
+}
+
+func (r *RequestLine) PrintData() {
+	fmt.Println("METHOD:", r.Method)
+	fmt.Println("VERSION:", r.HttpVersion)
+	fmt.Println("TARGET:", r.RequestTarget)
 }
